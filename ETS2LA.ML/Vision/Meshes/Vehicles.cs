@@ -102,9 +102,22 @@ public static class VisionVehicleUtils
 {
     public static List<Vector3> BuildVehicleGeometry(
         TrafficData? traffic,
-        ParkedVehicleData? parked)
+        ParkedVehicleData? parked,
+        DynamicObjectData? dynamicObjects = null)
     {
         List<Vector3> vertices = new();
+
+        if (dynamicObjects != null)
+        {
+            foreach (var obj in dynamicObjects.objects)
+            {
+                AddBox(
+                    vertices,
+                    obj.Position,
+                    obj.Rotation,
+                    obj.Size);
+            }
+        }
 
         if (parked != null)
         {
