@@ -26,8 +26,11 @@ public class SDL3ControlsBackend : IControlsBackend
 
     private readonly Dictionary<int, SDLJoystickPtr> _openJoysticks = new();
     private readonly Dictionary<int, InputDeviceInfo> _deviceInfos = new();
-    private List<KeyboardHookEventArgs> _pendingKeyEvents = new();
-    private EventLoopGlobalHook _keyboardHook;
+    private readonly record struct KeyInput(bool Pressed, string ControlId);
+
+    private List<KeyInput> _pendingKeyEvents = new();
+    private EventLoopGlobalHook? _keyboardHook;
+    private EvdevKeyboardReader? _evdevKeyboard;
 
     private readonly object _sync = new();
     private readonly CancellationTokenSource _cts = new();
@@ -66,16 +69,47 @@ public class SDL3ControlsBackend : IControlsBackend
         RegisterControl(DefaultControls.Cancel); // MODE
         RegisterControl(DefaultControls.Next);
 
+        StartKeyboardInput();
+    }
+
+    private void QueueKey(bool pressed, string controlId)
+    {
+        lock (_sync)
+            _pendingKeyEvents.Add(new KeyInput(pressed, controlId));
+    }
+
+    /// <summary>
+    ///  On Wayland global X11 hooks only see keys while an XWayland window has focus,
+    ///  so we read the keyboards from evdev instead. Everywhere else (X11) the
+    ///  SharpHook global hook is used, and it's also the fallback if evdev isn't usable.
+    /// </summary>
+    private void StartKeyboardInput()
+    {
+        if (EvdevKeyboardReader.IsWaylandSession())
+        {
+            try
+            {
+                var reader = new EvdevKeyboardReader(QueueKey);
+                if (reader.Start())
+                {
+                    _evdevKeyboard = reader;
+                    Logger.Info(_("Wayland session detected, reading keyboard input from evdev."));
+                    return;
+                }
+
+                reader.Dispose();
+                Logger.Warn(_("Wayland session detected but no keyboard could be read from /dev/input, falling back to the global input hook."));
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn(_("Failed to start evdev keyboard input: {0}", ex.Message));
+            }
+        }
+
         UioHookProvider.Instance.KeyTypedEnabled = true;
         _keyboardHook = new EventLoopGlobalHook();
-        _keyboardHook.KeyPressed += (s, e) => {
-            lock (_sync)
-                _pendingKeyEvents.Add(e);
-        };
-        _keyboardHook.KeyReleased += (s, e) => {
-            lock (_sync)
-                _pendingKeyEvents.Add(e);
-        };
+        _keyboardHook.KeyPressed += (s, e) => QueueKey(true, SharpHookCodeToCharacter(e.Data.KeyCode));
+        _keyboardHook.KeyReleased += (s, e) => QueueKey(false, SharpHookCodeToCharacter(e.Data.KeyCode));
 
         _keyboardHook.RunAsync();
     }
@@ -258,7 +292,8 @@ public class SDL3ControlsBackend : IControlsBackend
             SDL.QuitSubSystem((uint)flags);
         }
 
-        _keyboardHook.Dispose();
+        _keyboardHook?.Dispose();
+        _evdevKeyboard?.Dispose();
 
         Logger.Info("Linux controls backend shutdown complete, all controls saved.");
     }
@@ -364,10 +399,10 @@ public class SDL3ControlsBackend : IControlsBackend
             {
                 foreach (var keyEvent in _pendingKeyEvents)
                 {
-                    if (keyEvent.RawEvent.Type == SharpHook.Data.EventType.KeyPressed)
+                    if (keyEvent.Pressed)
                     {
                         _changingBindings = false;
-                        return ("Keyboard", SharpHookCodeToCharacter(keyEvent.Data.KeyCode));
+                        return ("Keyboard", keyEvent.ControlId);
                     }
                 }
 
@@ -413,16 +448,7 @@ public class SDL3ControlsBackend : IControlsBackend
             {
                 foreach (var keyEvent in _pendingKeyEvents)
                 {
-                    if (keyEvent.RawEvent.Type == SharpHook.Data.EventType.KeyPressed)
-                    {
-                        var controlId = SharpHookCodeToCharacter(keyEvent.Data.KeyCode);
-                        UpdateMatchingControls("Keyboard", controlId, true);
-                    }
-                    else if (keyEvent.RawEvent.Type == SharpHook.Data.EventType.KeyReleased)
-                    {
-                        var controlId = SharpHookCodeToCharacter(keyEvent.Data.KeyCode);
-                        UpdateMatchingControls("Keyboard", controlId, false);
-                    }
+                    UpdateMatchingControls("Keyboard", keyEvent.ControlId, keyEvent.Pressed);
                 }
 
                 _pendingKeyEvents.Clear();
