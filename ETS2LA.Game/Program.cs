@@ -41,6 +41,7 @@ public class GameHandler
         var semaphores = SemaphoreProvider.Current;
         var traffic = TrafficProvider.Current;
         var parkedVehicles = ParkedVehiclesProvider.Current;
+        var dynamicObjects = DynamicObjectsProvider.Current;
 
         // Spawn the game output handler as well.
         var output = GameOutput.Current;

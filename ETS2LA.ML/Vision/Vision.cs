@@ -116,7 +116,8 @@ public class VisionHandler
         // For vehicle rendering
         var vehicleVertices = VisionVehicleUtils.BuildVehicleGeometry(
                               TrafficProvider.Current.GetCurrentTrafficData(),
-                              ParkedVehiclesProvider.Current.GetCurrentParkedVehicleData());
+                              ParkedVehiclesProvider.Current.GetCurrentParkedVehicleData(),
+                              DynamicObjectsProvider.Current.GetCurrentDynamicObjectData());
         for(int i = 0; i < vehicleVertices.Count; i++)
             vehicleVertices[i] -= center;
         trafficMesh?.UpdateVertices(vehicleVertices);
